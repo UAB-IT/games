@@ -45294,7 +45294,7 @@ window['Runtime'] = (function Runtime(__can, __path){
 
 	    createList: function (file) {
 
-	        var extMaxHandle = 4;
+	        var extMaxHandle = 7;
 	        if (extMaxHandle) {
 	            this.extensions = new Array(extMaxHandle);
 	            this.numOfConditions = new Array(extMaxHandle);
@@ -45317,6 +45317,9 @@ window['Runtime'] = (function Runtime(__can, __path){
 	            this.addExt(e);
 	            e = new CExtLoad();
 	            e.handle = 3;
+	            this.addExt(e);
+	            e = new CExtLoad();
+	            e.handle = 5;
 	            this.addExt(e);
 	            // INCLUDE_ADDEXT
 	        }
@@ -45378,6 +45381,8 @@ window['Runtime'] = (function Runtime(__can, __path){
 	        return new CRunAdvDir();
 	        case 3:
 	        return new CRunMultipleTouch();
+	        case 5:
+	        return new CRunMobileFont();
 	            // INCLUDE_NEWEXT
 	        }
 
@@ -50076,7 +50081,8 @@ window['Runtime'] = (function Runtime(__can, __path){
 
 			// STARTCUT
 
-	if (extName=="box2dstatic") object=new CRunMvtbox2dstatic();		// ENDCUT
+	if (extName=="box2dstatic") object=new CRunMvtbox2dstatic();
+	if (extName=="inandout") object=new CRunMvtinandout();		// ENDCUT
 
 			/*
 			 if (document.debug==undefined)
@@ -68294,6 +68300,235 @@ window['Runtime'] = (function Runtime(__can, __path){
 		return Math.sqrt(dx * dx + dy * dy);
 	}	//----------------------------------------------------------------------------------
 	//
+	// MOBILE FONT OBJECT
+	//
+	//----------------------------------------------------------------------------------
+	/* Copyright (c) 1996-2012 Clickteam
+	 *
+	 * This source code is part of the HTML5 exporter for Clickteam Multimedia Fusion 2.
+	 *
+	 * Permission is hereby granted to any person obtaining a legal copy
+	 * of Clickteam Multimedia Fusion 2 to use or modify this source code for
+	 * debugging, optimizing, or customizing applications created with
+	 * Clickteam Multimedia Fusion 2.
+	 * Any other use of this source code is prohibited.
+	 *
+	 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	 * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	 * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	 * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+	 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+	 * IN THE SOFTWARE.
+	 */
+	CRunMobileFont.ACT_SETCOLOR = 0;
+	CRunMobileFont.ACT_SETINTERLINE = 1;
+	CRunMobileFont.ACT_SETINTERCHAR = 2;
+	CRunMobileFont.ACT_SETPRIORITY = 3;
+	CRunMobileFont.EXP_GETINTERLINE = 0;
+	CRunMobileFont.EXP_GETINTERCHAR = 1;
+	CRunMobileFont.EXP_GETPRIORITY = 2;
+
+	function CRunMobileFont()
+	{
+		this.gFont = null;
+	}
+	CRunMobileFont.prototype = CServices.extend(new CRunExtension(),
+		{
+			getNumberOfConditions: function ()
+			{
+				return 0;
+			},
+
+			createRunObject:  function (file, cob, version)
+			{
+				this.gFont = new CGraphicFont();
+				this.gFont.width = file.readAShort();
+				this.gFont.height = file.readAShort();
+				this.gFont.color = file.readAColor();
+				var images = new Array(1);
+				images[0] = file.readAShort();
+				this.ho.loadImageList(images);
+				this.gFont.image = this.ho.getImage(images[0]);
+				this.gFont.flags = file.readAInt();
+				this.gFont.fontName = file.readAString(32);
+				file.skipBytes(2);
+				this.gFont.fontHeight = file.readAShort();
+				this.gFont.fontFlags = file.readAInt();
+				this.gFont.interline = file.readShort();
+				this.gFont.interchar = file.readShort();
+				this.gFont.nChars = file.readAShort();
+				this.gFont.characters = file.readAString();
+
+				return true;
+			},
+			destroyRunObject: function (bFast)
+			{
+				this.rh.rhApp.graphicFonts.removeObject(this.gFont);
+			},
+			createFont:       function ()
+			{
+				// Calculates the width of the characters
+				var image = this.gFont.image;
+				var width = image.width;
+				var height = image.height;
+				var canvas = document.createElement("canvas");
+				canvas.width = width;
+				canvas.height = height;
+				var context = canvas.getContext("2d");
+				if (image.mosaic == 0)
+					context.drawImage(image.img, 0, 0);
+				else
+				{
+					context.drawImage(this.rh.rhApp.imageBank.mosaics[image.mosaic],
+						image.mosaicX, image.mosaicY,
+						width, height, 0, 0,
+						width, height);
+				}
+				var imageData = context.getImageData(0, 0, width, height);
+				var nChars = this.gFont.characters.length;
+				this.gFont.charWidths = new Array(nChars);
+				var n, m, line, col, x, y, cBase;
+				for (n = 0; n < nChars; n++)
+				{
+					line = Math.floor(n / this.gFont.nChars);
+					y = this.gFont.height + line * (this.gFont.height + 1);
+					col = n - (line * this.gFont.nChars);
+					x = col * (this.gFont.width + 1);
+
+				    // Fix: on devices the image can be modified when it's loaded, i.e. pixels can be antialiased (wtf)
+				    // To fix the issues this is causing with character width detection, we check if the difference between 2 pixels is less than 16
+				    // (and we only check the green component as border colors are always red and yellow)
+					var dxp = (y * width + x) * 4;
+					var g = imageData.data[dxp + 1];
+					for (m = 1; m < this.gFont.width; m++) {
+					    if (Math.abs(imageData.data[dxp + m * 4 + 1] - g) > 16) {
+					        break;
+					    }
+					}
+
+					this.gFont.charWidths[n] = m;
+				}
+				// Adds to font list
+				if (!this.rh.rhApp.graphicFonts)
+				{
+					this.rh.rhApp.graphicFonts = new CArrayList();
+				}
+				this.rh.rhApp.graphicFonts.add(this.gFont);
+
+				return CRunExtension.REFLAG_ONESHOT;
+			},
+
+			// Actions
+			// -------------------------------------------------
+			action:           function (num, act)
+			{
+				switch (num)
+				{
+					case CRunMobileFont.ACT_SETCOLOR:
+						this.actSetColor(act);
+						break;
+					case CRunMobileFont.ACT_SETINTERLINE:
+						this.actSetInterline(act);
+						break;
+					case CRunMobileFont.ACT_SETINTERCHAR:
+						this.actSetInterchar(act);
+						break;
+					case CRunMobileFont.ACT_SETPRIORITY:
+						this.actSetPriority(act);
+						break;
+				}
+			},
+			actSetColor:      function (act)
+			{
+				var newColor = act.getParamColour(this.rh, 0) & 0xFFFFFF;
+				var image = this.gFont.image;
+				var width = this.gFont.image.width;
+				var height = this.gFont.image.height;
+
+				var canvas = document.createElement("canvas");
+				canvas.width = width;
+				canvas.height = height;
+				var context = canvas.getContext("2d");
+				if (image.mosaic == 0)
+					context.drawImage(image.img, 0, 0);
+				else
+				{
+					context.drawImage(this.rh.rhApp.imageBank.mosaics[image.mosaic],
+						image.mosaicX, image.mosaicY,
+						width, height, 0, 0,
+						width, height);
+				}
+				var imageData = context.getImageData(0, 0, width, height);
+
+				var x, y;
+				var newR = (newColor >> 16) & 0xFF;
+				var newG = (newColor >> 8) & 0xFF;
+				var newB = (newColor) & 0xFF;
+				var offsetLine, adLine;
+				for (y = 0; y < height; y++)
+				{
+					offsetLine = y * width;
+					for (x = 0; x < width; x++)
+					{
+						adLine = (offsetLine + x) * 4;
+						if (imageData.data[adLine + 3] != 0)
+						{
+							imageData.data[adLine] = newR;
+							imageData.data[adLine + 1] = newG;
+							imageData.data[adLine + 2] = newB;
+						}
+					}
+				}
+				context.putImageData(imageData, 0, 0);
+				this.gFont.image.img = canvas;
+				this.gFont.image.mosaic = 0;
+				this.gFont.color = newColor;
+			},
+
+			actSetInterline: function (act)
+			{
+				this.gFont.interline = act.getParamExpression(this.rh, 0);
+			},
+
+			actSetInterchar: function (act)
+			{
+				this.gFont.interchar = act.getParamExpression(this.rh, 0);
+			},
+
+			actSetPriority: function (act)
+			{
+				var priority = act.getParamExpression(this.rh, 0);
+				if (priority == 0)
+					this.gFont.flags &= ~CGraphicFont.FLAG_PRIORITY;
+				else
+					this.gFont.flags |= CGraphicFont.FLAG_PRIORITY;
+			},
+
+			// Expressions
+			// --------------------------------------------
+			expression:     function (num)
+			{
+				switch (num)
+				{
+					case CRunMobileFont.EXP_GETINTERLINE:
+						return this.gFont.interline;
+					case CRunMobileFont.EXP_GETINTERCHAR:
+						return this.gFont.interchar;
+					case CRunMobileFont.EXP_GETPRIORITY:
+						if ((this.gFont.flags & CGraphicFont.FLAG_PRIORITY) != 0)
+						{
+							return 1;
+						}
+						break;
+				}
+				return 0;
+			}
+
+		});
+
+	//----------------------------------------------------------------------------------
+	//
 	// CRunMvtbox2dstatic
 	//
 	//----------------------------------------------------------------------------------
@@ -68853,6 +69088,353 @@ window['Runtime'] = (function Runtime(__can, __path){
 		});
 
 
+	//----------------------------------------------------------------------------------
+	//
+	// CRunMvtinandout
+	//
+	//----------------------------------------------------------------------------------
+	/* Copyright (c) 1996-2012 Clickteam
+	 *
+	 * This source code is part of the HTML5 exporter for Clickteam Multimedia Fusion 2.
+	 *
+	 * Permission is hereby granted to any person obtaining a legal copy
+	 * of Clickteam Multimedia Fusion 2 to use or modify this source code for
+	 * debugging, optimizing, or customizing applications created with
+	 * Clickteam Multimedia Fusion 2.
+	 * Any other use of this source code is prohibited.
+	 *
+	 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	 * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	 * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	 * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+	 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+	 * IN THE SOFTWARE.
+	 */
+	CRunMvtinandout.MOVESTATUS_PREPAREOUT = 0;
+	CRunMvtinandout.MOVESTATUS_MOVEOUT = 1;
+	CRunMvtinandout.MOVESTATUS_WAITOUT = 2;
+	CRunMvtinandout.MOVESTATUS_PREPAREIN = 3;
+	CRunMvtinandout.MOVESTATUS_MOVEIN = 4;
+	CRunMvtinandout.MOVESTATUS_WAITIN = 5;
+	CRunMvtinandout.MOVESTATUS_POSITIONIN = 6;
+	CRunMvtinandout.MOVESTATUS_POSITIONOUT = 7;
+	CRunMvtinandout.ACTION_POSITIONIN = 0;
+	CRunMvtinandout.ACTION_POSITIONOUT = 1;
+	CRunMvtinandout.ACTION_MOVEIN = 2;
+	CRunMvtinandout.ACTION_MOVEOUT = 3;
+	CRunMvtinandout.MFLAG_OUTATSTART = 0x00000001;
+	CRunMvtinandout.MFLAG_MOVEATSTART = 0x00000002;
+	CRunMvtinandout.MFLAG_STOPPED = 0x00000004;
+	CRunMvtinandout.MOVETYPE_LINEAR = 0;
+	CRunMvtinandout.MOVETYPE_SMOOTH = 1;
+
+	function CRunMvtinandout()
+	{
+		this.m_direction = 0;
+		this.m_speed = 0;
+		this.m_flags = 0;
+		this.m_moveStatus = 0;
+		this.m_angle = 0;
+		this.m_maxPente = 0;
+		this.m_moveTimerStart = 0;
+		this.m_stopTimer = 0;
+		this.m_type = 0;
+		this.m_startX = 0;
+		this.m_startY = 0;
+		this.m_destX = 0;
+		this.m_destY = 0;
+	}
+
+	CRunMvtinandout.prototype = CServices.extend(new CRunMvtExtension(),
+		{
+			initialize: function (file)
+			{
+				file.skipBytes(1);
+				this.m_type = file.readAInt();
+				this.m_direction = file.readAInt();
+				this.m_speed = file.readAInt();
+				this.m_flags = file.readAInt();
+				this.m_destX = file.readAInt();
+				this.m_destY = file.readAInt();
+				this.m_angle = (this.m_direction * Math.PI) / 180.0;
+				this.m_maxPente = 0;
+
+				if ((this.m_flags & CRunMvtinandout.MFLAG_MOVEATSTART) != 0)
+				{
+					if ((this.m_flags & CRunMvtinandout.MFLAG_OUTATSTART) == 0)
+					{
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_PREPAREOUT;
+					}
+					else
+					{
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_PREPAREIN;
+					}
+					this.m_flags &= ~CRunMvtinandout.MFLAG_STOPPED;
+				}
+				else
+				{
+					if ((this.m_flags & CRunMvtinandout.MFLAG_OUTATSTART) == 0)
+					{
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_WAITIN;
+					}
+					else
+					{
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_WAITOUT;
+					}
+				}
+			},
+
+			move: function ()
+			{
+				// Calcule la position de sortie
+				if (this.m_maxPente == 0)
+				{
+					var maxPente;
+					var x = 0, y = 0, rightX, bottomY;
+					this.m_startX = this.ho.hoX;
+					this.m_startY = this.ho.hoY;
+
+					if (this.m_destX != 0 || this.m_destY != 0)
+					{
+						var vX = this.m_destX - this.m_startX;
+						var vY = this.m_destY - this.m_startY;
+						maxPente = Math.sqrt(vX * vX + vY * vY);
+						if (maxPente == 0.0)
+						{
+							this.m_angle = 0.0;
+						}
+						else
+						{
+							this.m_angle = Math.acos(vX / maxPente);
+							if (this.m_destY > this.m_startY)
+							{
+								this.m_angle = 2.0 * Math.PI - this.m_angle;
+							}
+						}
+					}
+					else
+					{
+						for (maxPente = 0; maxPente < 100000; maxPente += 5)
+						{
+							x = CServices.floatToInt(Math.cos(this.m_angle) * maxPente + this.m_startX);
+							y = CServices.floatToInt(-Math.sin(this.m_angle) * maxPente + this.m_startY);
+							rightX = x + this.ho.hoImgWidth;
+							bottomY = y + this.ho.hoImgHeight;
+							if (x > this.ho.hoAdRunHeader.rhLevelSx)
+							{
+								break;
+							}
+							if (y > this.ho.hoAdRunHeader.rhLevelSy)
+							{
+								break;
+							}
+							if (rightX < 0)
+							{
+								break;
+							}
+							if (bottomY < 0)
+							{
+								break;
+							}
+						}
+						this.m_destX = x;
+						this.m_destY = y;
+					}
+					if (maxPente == 0)
+					{
+						maxPente = 5;
+					}
+					this.m_maxPente = maxPente;
+				}
+
+				var bRet = false;
+				if ((this.m_flags & CRunMvtinandout.MFLAG_OUTATSTART) != 0)
+				{
+					this.m_flags &= ~CRunMvtinandout.MFLAG_OUTATSTART;
+					this.ho.hoX = this.m_destX;
+					this.ho.hoY = this.m_destY;
+					bRet = true;
+				}
+
+				// Stopped?
+				if ((this.m_flags & CRunMvtinandout.MFLAG_STOPPED) != 0)
+				{
+					this.animations(CAnim.ANIMID_STOP);
+					this.collisions();
+					return this.ho.roc.rcChanged;
+				}
+
+				var pente;
+				var deltaTime;
+				switch (this.m_moveStatus)
+				{
+					case CRunMvtinandout.MOVESTATUS_PREPAREOUT:
+						this.ho.hoX = this.m_startX;
+						this.ho.hoY = this.m_startY;
+						this.m_moveTimerStart = this.ho.hoAdRunHeader.rhTimer;
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_MOVEOUT;
+						break;
+					case CRunMvtinandout.MOVESTATUS_MOVEOUT:
+					{
+						deltaTime = CServices.floatToInt(this.ho.hoAdRunHeader.rhTimer - this.m_moveTimerStart);
+						if (deltaTime >= this.m_speed)
+						{
+							this.ho.hoX = this.m_destX;
+							this.ho.hoY = this.m_destY;
+							this.m_moveStatus = CRunMvtinandout.MOVESTATUS_WAITOUT;
+						}
+						else
+						{
+							switch (this.m_type)
+							{
+								case CRunMvtinandout.MOVETYPE_LINEAR:
+								{
+									pente = (this.m_maxPente * (Number(deltaTime) / Number(this.m_speed)));
+									this.ho.hoX = CServices.floatToInt(Math.cos(this.m_angle) * pente + this.m_startX);
+									this.ho.hoY = CServices.floatToInt(-Math.sin(this.m_angle) * pente + this.m_startY);
+								}
+									break;
+								case CRunMvtinandout.MOVETYPE_SMOOTH:
+								{
+									pente = this.m_maxPente - Math.cos(Math.PI / 2 * (Number(deltaTime) / Number(this.m_speed))) * this.m_maxPente;
+									this.ho.hoX = CServices.floatToInt(Math.cos(this.m_angle) * pente + this.m_startX);
+									this.ho.hoY = CServices.floatToInt(-Math.sin(this.m_angle) * pente + this.m_startY);
+								}
+									break;
+							}
+						}
+						this.ho.roc.rcDir = CServices.floatToInt((this.m_direction * 32) / 360);
+						this.ho.roc.rcSpeed = 100;
+						this.animations(CAnim.ANIMID_WALK);
+						bRet = true;
+					}
+						break;
+					case CRunMvtinandout.MOVESTATUS_WAITOUT:
+						this.animations(CAnim.ANIMID_STOP);
+						bRet = this.ho.roc.rcChanged;
+						break;
+					case CRunMvtinandout.MOVESTATUS_POSITIONOUT:
+						this.ho.hoX = this.m_destX;
+						this.ho.hoY = this.m_destY;
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_WAITOUT;
+						bRet = true;
+						break;
+					case CRunMvtinandout.MOVESTATUS_PREPAREIN:
+						this.ho.hoX = this.m_destX;
+						this.ho.hoY = this.m_destY;
+						this.m_moveTimerStart = this.ho.hoAdRunHeader.rhTimer;
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_MOVEIN;
+						break;
+					case CRunMvtinandout.MOVESTATUS_MOVEIN:
+					{
+						deltaTime = CServices.floatToInt(this.ho.hoAdRunHeader.rhTimer - this.m_moveTimerStart);
+						if (deltaTime >= this.m_speed)
+						{
+							this.ho.hoX = this.m_startX;
+							this.ho.hoY = this.m_startY;
+							this.m_moveStatus = CRunMvtinandout.MOVESTATUS_WAITIN;
+						}
+						else
+						{
+							switch (this.m_type)
+							{
+								case CRunMvtinandout.MOVETYPE_LINEAR:
+								{
+									pente = (this.m_maxPente - (this.m_maxPente * (Number(deltaTime) / Number(this.m_speed))));
+									this.ho.hoX = CServices.floatToInt(Math.cos(this.m_angle) * pente + this.m_startX);
+									this.ho.hoY = CServices.floatToInt(-Math.sin(this.m_angle) * pente + this.m_startY);
+								}
+									break;
+								case CRunMvtinandout.MOVETYPE_SMOOTH:
+								{
+									pente = this.m_maxPente - Math.sin(Math.PI / 2 * (Number(deltaTime) / Number(this.m_speed))) * this.m_maxPente;
+									this.ho.hoX = CServices.floatToInt(Math.cos(this.m_angle) * pente + this.m_startX);
+									this.ho.hoY = CServices.floatToInt(-Math.sin(this.m_angle) * pente + this.m_startY);
+								}
+									break;
+							}
+						}
+						this.ho.roc.rcDir = (CServices.floatToInt(((this.m_direction * 32) / 360 + 16))) % 32;
+						this.ho.roc.rcSpeed = 100;
+						this.animations(CAnim.ANIMID_WALK);
+						bRet = true;
+					}
+						break;
+					case CRunMvtinandout.MOVESTATUS_WAITIN:
+						this.animations(CAnim.ANIMID_STOP);
+						bRet = this.ho.roc.rcChanged;
+						break;
+					case CRunMvtinandout.MOVESTATUS_POSITIONIN:
+						this.ho.hoX = this.m_startX;
+						this.ho.hoY = this.m_startY;
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_WAITIN;
+						bRet = true;
+						break;
+				}
+
+				// detects the this.collisions
+				this.collisions();
+
+				// The object has been moved
+				return bRet;
+			},
+
+			stop: function (bCurrent)
+			{
+				this.m_flags |= CRunMvtinandout.MFLAG_STOPPED;
+				this.m_stopTimer = this.ho.hoAdRunHeader.rhTimer;
+			},
+
+			start: function ()
+			{
+				if ((this.m_flags & CRunMvtinandout.MFLAG_STOPPED) != 0)
+				{
+					this.m_flags &= ~CRunMvtinandout.MFLAG_STOPPED;
+					this.m_moveTimerStart += this.ho.hoAdRunHeader.rhTimer - this.m_stopTimer;
+				}
+				if (this.m_moveStatus == CRunMvtinandout.MOVESTATUS_WAITOUT)
+				{
+					this.m_moveStatus = CRunMvtinandout.MOVESTATUS_PREPAREIN;
+				}
+				else if (this.m_moveStatus == CRunMvtinandout.MOVESTATUS_WAITIN)
+				{
+					this.m_moveStatus = CRunMvtinandout.MOVESTATUS_PREPAREOUT;
+				}
+			},
+
+			getSpeed: function ()
+			{
+				return this.ho.roc.rcSpeed;
+			},
+
+			actionEntry: function (action)
+			{
+				var param;
+				switch (action)
+				{
+					case CRunMvtinandout.ACTION_POSITIONIN:
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_POSITIONIN;
+						this.m_flags &= ~CRunMvtinandout.MFLAG_STOPPED;
+						break;
+					case CRunMvtinandout.ACTION_POSITIONOUT:
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_POSITIONOUT;
+						this.m_flags &= ~CRunMvtinandout.MFLAG_STOPPED;
+						break;
+					case CRunMvtinandout.ACTION_MOVEIN:
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_PREPAREIN;
+						this.m_flags &= ~CRunMvtinandout.MFLAG_STOPPED;
+						break;
+					case CRunMvtinandout.ACTION_MOVEOUT:
+						this.m_moveStatus = CRunMvtinandout.MOVESTATUS_PREPAREOUT;
+						this.m_flags &= ~CRunMvtinandout.MFLAG_STOPPED;
+						break;
+					default:
+						break;
+				}
+				return 0;
+			}
+		});
 
 	Runtime(__can, __path); 
 })
